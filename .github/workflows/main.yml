@@ -20,23 +20,53 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
       - name: Extract Android project
+        shell: bash
         run: |
+          set -e
+
           mkdir -p project
-          unzip -q *.zip -d project
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d project
+
+      - name: Locate Android project
+        shell: bash
+        run: |
+          set -e
+
+          GRADLEW=$(find project -type f -name 'gradlew' -print -quit)
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: gradlew was not found inside the ZIP."
+            echo "The ZIP does not appear to contain a complete Android Gradle project."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$GRADLEW")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
+
+      - name: Make Gradle executable
+        run: chmod +x "$PROJECT_DIR/gradlew"
 
       - name: Build Debug APK
-        working-directory: project/HabeebUrduWritingApp
-        run: |
-          gradle assembleDebug --stacktrace
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Habeeb-Urdu-Writing-App-APK
-          path: project/HabeebUrduWritingApp/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
