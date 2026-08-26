@@ -42,14 +42,70 @@ jobs:
           echo "Using ZIP: $ZIP_FILE"
           unzip -q "$ZIP_FILE" -d project
 
-      - name: Build Debug APK
-        working-directory: project/HabeebUrduWritingApp
+      - name: Locate Android project
+        shell: bash
         run: |
-          gradle assembleDebug --stacktrace
+          set -e
+
+          GRADLEW=$(find project -type f -name 'gradlew' -print -quit)
+
+          if [ -n "$GRADLEW" ]; then
+            PROJECT_DIR=$(dirname "$GRADLEW")
+            echo "Found Gradle wrapper."
+          else
+            SETTINGS_FILE=$(find project -type f -name 'settings.gradle' -o -name 'settings.gradle.kts' | head -n 1)
+
+            if [ -n "$SETTINGS_FILE" ]; then
+              PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+              echo "Found Android project using settings file."
+            else
+              echo "ERROR: Complete Android Gradle project was not found in ZIP."
+              echo "ZIP contents:"
+              find project -maxdepth 4 -type f | sort
+              exit 1
+            fi
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $PROJECT_DIR"
+
+      - name: Make Gradle wrapper executable
+        if: ${{ env.PROJECT_DIR != '' }}
+        run: |
+          if [ -f "$PROJECT_DIR/gradlew" ]; then
+            chmod +x "$PROJECT_DIR/gradlew"
+          fi
+
+      - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      - name: Locate APK
+        shell: bash
+        run: |
+          set -e
+
+          APK=$(find "$PROJECT_DIR" -type f -name '*.apk' -path '*/build/outputs/apk/*' -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK found at: $APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Habeeb-Urdu-Writing-App-APK
-          path: project/HabeebUrduWritingApp/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
