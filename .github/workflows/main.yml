@@ -6,20 +6,11 @@ on:
     branches:
       - main
 
-concurrency:
-  group: habeeb-urdu-build-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -27,58 +18,56 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+          java-version: "17"
 
       - name: Extract Android project
-        shell: bash
         run: |
-          set -e
-
           mkdir -p project
+          unzip -q "HabeebUrduWritingApp_BUILD_FIXED.zip" -d project
+          echo "Project extracted successfully"
+          find project -maxdepth 4 -type f | head -100
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in repository root."
-            exit 1
-          fi
-
-          echo "Using ZIP: $ZIP_FILE"
-
-          unzip -q "$ZIP_FILE" -d project
-
-      - name: Locate Android project
-        shell: bash
+      - name: Locate Gradle project
         run: |
-          set -e
+          GRADLEW=$(find project -type f -name gradlew | head -n 1)
 
-          PROJECT_DIR=$(dirname "$(find project -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)")
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project not found."
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: gradlew file was not found inside the ZIP."
+            echo "Contents of extracted project:"
+            find project -maxdepth 5 -print
             exit 1
           fi
+
+          PROJECT_DIR=$(dirname "$GRADLEW")
+
+          echo "Found Gradle wrapper: $GRADLEW"
+          echo "Project directory: $PROJECT_DIR"
+
+          chmod +x "$GRADLEW"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
 
-      - name: Make Gradle executable
-        shell: bash
-        run: |
-          chmod +x "$PROJECT_DIR/gradlew"
-
       - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          cd "$PROJECT_DIR"
           ./gradlew assembleDebug --stacktrace
+
+      - name: Find APK
+        run: |
+          APK_FILE=$(find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/debug/*.apk" | head -n 1)
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: Debug APK was not found."
+            find "$PROJECT_DIR" -type f -name "*.apk"
+            exit 1
+          fi
+
+          mkdir -p apk-output
+          cp "$APK_FILE" apk-output/HabeebUrduWritingApp.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Habeeb-Urdu-Writing-App-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          name: HabeebUrduWritingApp-APK
+          path: apk-output/HabeebUrduWritingApp.apk
           if-no-files-found: error
