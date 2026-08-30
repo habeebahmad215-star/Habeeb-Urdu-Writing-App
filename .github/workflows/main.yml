@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -20,64 +21,136 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
       - name: Find project ZIP
         id: zip
+        shell: bash
         run: |
-          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*HabeebUrduWritingApp*.zip" | head -n 1)
+          ZIP_FILE=$(find . \
+            -type f \
+            -iname "*.zip" \
+            ! -path "./.git/*" \
+            -print \
+            | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: HabeebUrduWritingApp ZIP file was not found."
-            echo "Files available:"
-            find . -maxdepth 3 -type f
+            echo "ERROR: No ZIP file found."
             exit 1
           fi
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_OUTPUT"
-          echo "Found ZIP: $ZIP_FILE"
 
-      - name: Extract Android project
+          echo "Using ZIP:"
+          echo "$ZIP_FILE"
+
+      - name: Extract project
+        shell: bash
         run: |
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
 
-          unzip -q "${{ steps.zip.outputs.ZIP_FILE }}" -d extracted
+          unzip -q \
+            "${{ steps.zip.outputs.ZIP_FILE }}" \
+            -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 4 -type f | sort
+          echo "Project extracted successfully."
 
-      - name: Locate Gradle project
+          find extracted \
+            -maxdepth 3 \
+            -type f \
+            | sort
+
+      - name: Locate Android project
         id: project
+        shell: bash
         run: |
-          PROJECT_DIR=$(find extracted -type f -name "settings.gradle" -print -quit | xargs dirname)
+          SETTINGS=$(find extracted \
+            -type f \
+            -name "settings.gradle" \
+            -print \
+            -quit)
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: settings.gradle was not found."
+          if [ -z "$SETTINGS" ]; then
+            SETTINGS=$(find extracted \
+              -type f \
+              -name "settings.gradle.kts" \
+              -print \
+              -quit)
+          fi
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found."
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Project directory: $PROJECT_DIR"
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Project files:"
-          ls -la "$PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
+
+      - name: Show Gradle files
+        working-directory: ${{ steps.project.outputs.PROJECT_DIR }}
+        run: |
+          echo "Project directory:"
+          pwd
+
+          echo "Files:"
+          ls -la
+
+          echo "Gradle version:"
+          gradle --version
 
       - name: Build Debug APK
         working-directory: ${{ steps.project.outputs.PROJECT_DIR }}
+        shell: bash
         run: |
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug \
+            --stacktrace \
+            --no-daemon
 
-      - name: Show generated APK files
+      - name: Show generated APK
+        if: always()
+        shell: bash
         run: |
-          find extracted -type f -name "*.apk" -print
+          echo "Searching for APK files..."
+
+          find extracted \
+            -type f \
+            -name "*.apk" \
+            -print || true
 
       - name: Upload Debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Habeeb-Urdu-Writing-App-APK
-          path: extracted/**/app/build/outputs/apk/debug/*.apk
+          path: |
+            extracted/**/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Upload build reports if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-Failure-Reports
+          path: |
+            extracted/**/build/reports/**
+            extracted/**/app/build/reports/**
+          if-no-files-found: ignore
